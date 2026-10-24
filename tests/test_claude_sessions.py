@@ -248,3 +248,43 @@ class RenameTest(unittest.TestCase):
     def test_unknown_session_changes_nothing(self):
         self.assertEqual(self.run_rename('ffffffff', 'x'), 1)
         self.assertEqual(cs.session_name(self.path), 'second')
+
+
+class RestoreMetaTest(unittest.TestCase):
+    """A restored window gets its name and remote control back on the command line."""
+
+    def setUp(self):
+        import json, tempfile
+        self.json = json
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = patch.object(cs, 'PROJ', self.tmp.name)
+        p.start()
+        self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, cs.enc('/w/api')))
+
+    def transcript(self, *recs):
+        with open(os.path.join(self.tmp.name, cs.enc('/w/api'), SID + '.jsonl'), 'w') as fh:
+            fh.write(''.join(self.json.dumps(r) + '\n' for r in recs))
+
+    def cmd(self):
+        return cs.build_cmd({'cwd': '/w/api', 'session': SID, 'flags': ['--dangerously-skip-permissions']})
+
+    def test_named_remote_session(self):
+        self.transcript({'type': 'custom-title', 'customTitle': 'old', 'sessionId': SID},
+                        {'type': 'bridge-session', 'sessionId': SID, 'bridgeSessionId': 'cse_x'},
+                        {'type': 'custom-title', 'customTitle': "tim's work", 'sessionId': SID})
+        self.assertEqual(self.cmd(), 'cd /w/api && claude --dangerously-skip-permissions --resume ' + SID +
+                         " --name 'tim'\"'\"'s work' --remote-control 'tim'\"'\"'s work'")
+
+    def test_remote_without_name(self):
+        self.transcript({'type': 'bridge-session', 'sessionId': SID})
+        self.assertTrue(self.cmd().endswith('--resume ' + SID + ' --remote-control'))
+
+    def test_named_but_never_remote(self):
+        self.transcript({'type': 'custom-title', 'customTitle': 'gateway', 'sessionId': SID})
+        self.assertTrue(self.cmd().endswith('--resume ' + SID + ' --name gateway'))
+
+    def test_plain_session_unchanged(self):
+        self.transcript({'type': 'user', 'message': {'content': 'hi'}})
+        self.assertTrue(self.cmd().endswith('--resume ' + SID))

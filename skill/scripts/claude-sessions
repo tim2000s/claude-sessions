@@ -303,17 +303,19 @@ def title(path):
     return ""
 
 
-NAME_HINT = b'"custom-title"'
+META_HINTS = (b'"custom-title"', b'"bridge-session"')
 
 
-def session_name(path):
-    """The name given with /rename or `claude --name`, or "". Claude Code appends a
-    custom-title record each time, anywhere in the file, so the last one wins."""
-    name = ""
+def session_meta(path):
+    """(name, remote) for a transcript. name is the one given with /rename or `claude --name`,
+    or "": Claude Code appends a custom-title record each time, so the last one wins. remote is
+    True when the conversation was ever connected with /remote-control, which leaves
+    bridge-session records but nothing on the command line."""
+    name, remote = "", False
     try:
         with open(path, "rb") as fh:
             for raw in fh:
-                if NAME_HINT not in raw:
+                if not any(h in raw for h in META_HINTS):
                     continue
                 try:
                     d = json.loads(raw.decode("utf-8", "replace"))
@@ -321,9 +323,15 @@ def session_name(path):
                     continue
                 if d.get("type") == "custom-title":
                     name = d.get("customTitle") or ""
+                elif d.get("type") == "bridge-session":
+                    remote = True
     except OSError:
         pass
-    return name
+    return name, remote
+
+
+def session_name(path):
+    return session_meta(path)[0]
 
 
 def write_name(path, sid, name):
@@ -550,6 +558,13 @@ def build_cmd(r):
         c += " " + shlex.quote(f)
     if r.get("session"):
         c += " --resume %s" % r["session"]
+        # Name and remote control are given explicitly rather than trusted to come back
+        # with the resume. --remote-control takes an optional value, so it goes last.
+        name, remote = session_meta(os.path.join(PROJ, enc(r["cwd"]), r["session"] + ".jsonl"))
+        if name:
+            c += " --name %s" % shlex.quote(name)
+        if remote:
+            c += " --remote-control" + (" %s" % shlex.quote(name) if name else "")
     return c
 
 

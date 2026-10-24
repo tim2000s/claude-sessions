@@ -79,6 +79,11 @@ conversation that is open in a window, because that window keeps its name in
 memory and is still appending to the file; use `/rename` there instead
 (`--force` overrides).
 
+A restored window is launched with `--name <name>` when the conversation has
+one, and with `--remote-control <name>` when it was ever connected with
+`/remote-control` (it leaves `bridge-session` records in the transcript, and
+nothing on the command line).
+
 ## Remembering what you closed
 
 A window you deliberately closed should be remembered but not reopened:

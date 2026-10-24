@@ -120,6 +120,10 @@ claude-sessions rename 3f2a9c14 gateway rate limiting
 It writes the same records `/rename` does. An open conversation is refused,
 since its window holds the name in memory; type `/rename` there instead.
 
+`restore` and `find --go` relaunch a named conversation with `--name`, and one
+that was connected with `/remote-control` with `--remote-control <name>`, so both
+come back without retyping them.
+
 ## Remembering what you closed
 
 A window you closed on purpose should be remembered, not reopened:
