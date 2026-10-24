@@ -1,6 +1,6 @@
 ---
 name: claude-sessions
-description: Save, restore, find and arrange Claude Code windows — which directories were open, which conversation each was on, where each window sat on screen — plus a searchable library of every past conversation. Use when the user says "save my sessions", "restore my claude windows", "reopen everything", "I need to restart, don't lose my sessions", "how do I get all my windows back", "resume all my conversations", "arrange my claude windows", "where is my <project> session", "find the window I was using for X", "which window is that in", "what was I doing in X", or asks how Claude Code session persistence works. Also use to set up an automatic periodic snapshot.
+description: Save, restore, find and arrange Claude Code windows — which directories were open, which conversation each was on, where each window sat on screen — plus a searchable library of every past conversation. Use when the user says "save my sessions", "restore my claude windows", "reopen everything", "I need to restart, don't lose my sessions", "how do I get all my windows back", "resume all my conversations", "arrange my claude windows", "where is my <project> session", "find the window I was using for X", "which window is that in", "what was I doing in X", or asks how Claude Code session persistence works, or wants to name or rename a session. Also use to set up an automatic periodic snapshot.
 ---
 
 # claude-sessions — save, restore and arrange your open Claude Code windows
@@ -36,6 +36,7 @@ claude-sessions arrange grid        # retile the windows that are open right now
 claude-sessions find gloss          # which window is that in? is it even open?
 claude-sessions find gloss --go     # bring it forward, or reopen it if it's closed
 claude-sessions page --open         # searchable page of every conversation
+claude-sessions rename 3f2a9c14 gateway   # name a conversation that is not open
 claude-sessions doctor              # show exactly what it can and cannot see
 ```
 
@@ -64,6 +65,19 @@ conversation — open or not. Open ones sort first and show the tty and screen
 position they are on. `--go` acts on the top match: it brings that window
 forward if it is running, and reopens it if it is not. This is the answer to
 "where is my X session, and is it even open?".
+
+## Naming a conversation
+
+`/rename <name>` inside a window, or `claude --name <name>` at launch, names a
+conversation. Claude Code stores the name as a `custom-title` record in the
+transcript, and `list`, `find` and `page` show it and search it. `find` ranks a
+match in the name above a match in the directory.
+
+`claude-sessions rename <id-prefix|current-name> <new name>` names a conversation
+from outside, by appending the same records `/rename` writes. It refuses a
+conversation that is open in a window, because that window keeps its name in
+memory and is still appending to the file; use `/rename` there instead
+(`--force` overrides).
 
 ## Remembering what you closed
 

@@ -17,6 +17,7 @@ sat on screen. This records that, and replays it.
     claude-sessions arrange grid         retile the windows that are open now
     claude-sessions arrange focus --busy-first   busiest window big, the rest stacked beside it
     claude-sessions arrange columns --display 2  side by side on the second display
+    claude-sessions rename <id> <name>   name a conversation, as /rename does inside it
     claude-sessions displays             the displays --display can name
     claude-sessions doctor               show what it can and cannot see
     claude-sessions install-auto [secs]  periodic snapshot via launchd
@@ -302,6 +303,42 @@ def title(path):
     return ""
 
 
+NAME_HINT = b'"custom-title"'
+
+
+def session_name(path):
+    """The name given with /rename or `claude --name`, or "". Claude Code appends a
+    custom-title record each time, anywhere in the file, so the last one wins."""
+    name = ""
+    try:
+        with open(path, "rb") as fh:
+            for raw in fh:
+                if NAME_HINT not in raw:
+                    continue
+                try:
+                    d = json.loads(raw.decode("utf-8", "replace"))
+                except Exception:
+                    continue
+                if d.get("type") == "custom-title":
+                    name = d.get("customTitle") or ""
+    except OSError:
+        pass
+    return name
+
+
+def write_name(path, sid, name):
+    """Append the same two records /rename writes, so Claude Code reads the name back."""
+    with open(path, "rb+") as fh:
+        fh.seek(0, os.SEEK_END)
+        if fh.tell():
+            fh.seek(-1, os.SEEK_END)
+            if fh.read(1) != b"\n":
+                fh.write(b"\n")
+        for rec in ({"type": "custom-title", "customTitle": name, "sessionId": sid},
+                    {"type": "agent-name", "agentName": name, "sessionId": sid}):
+            fh.write((json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
 def match_sessions(windows):
     """Give every window a session id, and say how sure we are.
 
@@ -414,6 +451,7 @@ def cmd_save(args):
             "cwd": w["cwd"],
             "session": w["session"],
             "title": title(f) if w["session"] and os.path.exists(f) else "",
+            "name": session_name(f) if w["session"] and os.path.exists(f) else "",
             "flags": w.get("flags") or [],
             "match": w["match"],
             "tty": w["tty"],
@@ -493,7 +531,11 @@ def cmd_list(args):
         if not r.get("bounds"):
             flags.append("no position")
         print("  %s%s" % (r["cwd"], "   [" + ", ".join(flags) + "]" if flags else ""))
-        print("     %s  %s" % ((r.get("session") or "-")[:8], (r.get("title") or "")[:72]))
+        # read the name now, not from the snapshot, so a rename since the last save shows
+        f = os.path.join(PROJ, enc(r["cwd"]), (r.get("session") or "") + ".jsonl")
+        name = session_name(f) if r.get("session") else ""
+        label = "%s: %s" % (name, r.get("title") or "") if name else (r.get("title") or "")
+        print("     %s  %s" % ((r.get("session") or "-")[:8], label[:72]))
     return 0
 
 
@@ -1066,6 +1108,7 @@ def scan_library(days=None, deep=False):
             first = title(f)[:200]
         last, last_ts = tail_user(f)
         row = {"cwd": cwd, "branch": branch or "", "session": os.path.basename(f)[:-6],
+               "name": session_name(f), "file": f,
                "first": first, "last": last, "started": started,
                "ended": last_ts or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)),
                "mtime": int(st.st_mtime), "bytes": st.st_size}
@@ -1181,7 +1224,7 @@ const span = r => {
   return m < 60 ? m + "m" : Math.floor(m/60) + "h " + (m%60) + "m";
 };
 for (const r of DATA)
-  r._hay = [r.cwd, r.branch, r.first, r.last,
+  r._hay = [r.name, r.cwd, r.branch, r.first, r.last,
             ...(r.thread || []).map(m => m.m)].join(" ").toLowerCase();
 
 let query = "";
@@ -1225,7 +1268,9 @@ function render() {
       const hitsIn = query && (r.thread || []).some(m => !m.gap && m.m.toLowerCase().includes(query));
       return '<details class="card" data-s="' + r.session + '"' + (hitsIn ? " open" : "") + '>' +
         "<summary>" +
-          '<div class="t">' + (hl(r.first) || "<em>no prompt yet</em>") + "</div>" +
+          (r.name ? '<div class="t">' + hl(r.name) + "</div>" +
+                    '<div class="l">' + (hl(r.first) || "<em>no prompt yet</em>") + "</div>"
+                  : '<div class="t">' + (hl(r.first) || "<em>no prompt yet</em>") + "</div>") +
           (r.last && r.last !== r.first
             ? '<div class="l"><b>left off:</b> ' + hl(r.last) + "</div>" : "") +
           '<div class="meta">' +
@@ -1408,13 +1453,14 @@ def cmd_find(args):
 
     hits = []
     for r in rows:
-        hay = " ".join([r["cwd"], r["first"], r["last"], r["branch"], r["session"]]).lower()
+        hay = " ".join([r["name"], r["cwd"], r["first"], r["last"], r["branch"], r["session"]]).lower()
         if q not in hay:
             continue
         r["open"] = r["session"] in wins
         r["archived"] = r["session"] in arch
-        # a match in the directory name is what you usually mean by "my gloss session"
-        r["score"] = (0 if r["open"] else 1, 0 if q in r["cwd"].lower() else 1, -r["mtime"])
+        # a name you gave it, then the directory, is what you usually mean by "my gloss session"
+        r["score"] = (0 if r["open"] else 1, 0 if q in r["name"].lower() else 1,
+                      0 if q in r["cwd"].lower() else 1, -r["mtime"])
         hits.append(r)
     hits.sort(key=lambda r: r["score"])
 
@@ -1454,6 +1500,8 @@ def cmd_find(args):
             where = "  [%s%s]" % (w["tty"].replace("/dev/", ""),
                                   ", at %d,%d" % (b[0], b[1]) if b else "")
         print("  %s%s%s" % (mark, r["cwd"], where))
+        if r["name"]:
+            print("        name: %s" % r["name"][:100])
         print("        %s" % (r["first"] or "(no prompt yet)")[:100])
         if r["last"] and r["last"] != r["first"]:
             print("        left off: %s" % r["last"][:100])
@@ -1466,6 +1514,38 @@ def cmd_find(args):
         print("\n`claude-sessions find %s --go` brings that window forward" % q)
     else:
         print("\n`claude-sessions find %s --go` reopens the top match" % q)
+    return 0
+
+
+def cmd_rename(args):
+    """Name a conversation, as /rename would from inside its window."""
+    name = " ".join(args.name).strip()
+    if not name:
+        print("give the new name after the session, e.g. `claude-sessions rename 3f2a9c14 gateway`")
+        return 1
+    want = args.session.lower()
+    rows = scan_library(days=None)
+    hits = [r for r in rows if r["session"].startswith(want) or r["name"].lower() == want]
+    if not hits:
+        print("no conversation with an id starting %r or named %r" % (args.session, args.session))
+        return 1
+    if len(hits) > 1:
+        print("%r matches %d conversations; give more of the id:" % (args.session, len(hits)))
+        for r in hits[:10]:
+            print("  %s  %s  %s" % (r["session"], r["cwd"], (r["name"] or r["first"])[:60]))
+        return 1
+    r = hits[0]
+    # The window holds its name in memory and keeps appending to this file, so a name
+    # written from outside would neither show there nor be safe against a concurrent write.
+    if r["session"] in {w.get("session") for w in match_sessions(discover())} and not args.force:
+        print("that conversation is open in a window (%s); type `/rename %s` there instead"
+              % (r["cwd"], name))
+        print("  --force writes it anyway; the window shows it only after it is reopened")
+        return 1
+    old = r["name"]
+    write_name(r["file"], r["session"], name)
+    print("renamed %s  %s" % (r["session"][:8], r["cwd"]))
+    print("  %s -> %s" % (old or "(no name)", name))
     return 0
 
 
@@ -1669,6 +1749,12 @@ def main():
     s.add_argument("--all", action="store_true")
     s.add_argument("--limit", type=int, default=8)
     s.set_defaults(fn=cmd_find)
+
+    s = sub.add_parser("rename", help="name a conversation, as /rename does from inside it")
+    s.add_argument("session", help="session id prefix, or the conversation's current name")
+    s.add_argument("name", nargs="+")
+    s.add_argument("--force", action="store_true", help="rename even if it is open in a window")
+    s.set_defaults(fn=cmd_rename)
 
     s = sub.add_parser("displays", help="list the displays --display can name")
     s.add_argument("--json", action="store_true")

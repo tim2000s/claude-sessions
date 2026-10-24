@@ -184,3 +184,67 @@ class Displays(unittest.TestCase):
         self.assertEqual(cs.display_rect('lg', self.SCREENS), [2560, 110, 5120, 1550])
         self.assertIsNone(cs.display_rect('3', self.SCREENS))
         self.assertIsNone(cs.display_rect('dell', self.SCREENS))
+
+
+class RenameTest(unittest.TestCase):
+    """Names are custom-title records in the transcript; the last one wins."""
+
+    def setUp(self):
+        import json, tempfile, types
+        self.json, self.types = json, types
+        self.tmp = tempfile.TemporaryDirectory()
+        self.proj = os.path.join(self.tmp.name, 'projects')
+        self.cwd = '/Users/x/dev/api'
+        d = os.path.join(self.proj, cs.enc(self.cwd))
+        os.makedirs(d)
+        self.path = os.path.join(d, SID + '.jsonl')
+        recs = [{'type': 'user', 'entrypoint': 'cli', 'cwd': self.cwd, 'timestamp': '2026-10-24T10:00:00Z',
+                 'message': {'content': 'rate limiter drops requests'}},
+                {'type': 'custom-title', 'customTitle': 'first', 'sessionId': SID},
+                {'type': 'custom-title', 'customTitle': 'second', 'sessionId': SID}]
+        with open(self.path, 'w') as fh:
+            # no trailing newline, as a transcript cut off mid-write would be
+            fh.write('\n'.join(json.dumps(r) for r in recs))
+        self.proj_patch = patch.object(cs, 'PROJ', self.proj)
+        self.proj_patch.start()
+
+    def tearDown(self):
+        self.proj_patch.stop()
+        self.tmp.cleanup()
+
+    def run_rename(self, session, name, open_ids=(), force=False):
+        wins = [{'session': s} for s in open_ids]
+        args = self.types.SimpleNamespace(session=session, name=name.split(), force=force)
+        with patch.object(cs, 'match_sessions', return_value=wins), \
+                patch.object(cs, 'discover', return_value=[]), patch('builtins.print'):
+            return cs.cmd_rename(args)
+
+    def test_last_name_wins(self):
+        self.assertEqual(cs.session_name(self.path), 'second')
+
+    def test_no_name_is_empty(self):
+        self.assertEqual(cs.session_name(self.path + '.missing'), '')
+
+    def test_rename_by_id_prefix_appends_and_keeps_file_valid(self):
+        self.assertEqual(self.run_rename(SID[:8], 'gateway work'), 0)
+        self.assertEqual(cs.session_name(self.path), 'gateway work')
+        with open(self.path) as fh:
+            lines = fh.read().splitlines()
+        for line in lines:
+            self.json.loads(line)       # every line still parses
+        self.assertEqual(self.json.loads(lines[-1]),
+                         {'type': 'agent-name', 'agentName': 'gateway work', 'sessionId': SID})
+
+    def test_rename_by_current_name(self):
+        self.assertEqual(self.run_rename('SECOND', 'third'), 0)
+        self.assertEqual(cs.session_name(self.path), 'third')
+
+    def test_refuses_open_session_unless_forced(self):
+        self.assertEqual(self.run_rename(SID[:8], 'x', open_ids=[SID]), 1)
+        self.assertEqual(cs.session_name(self.path), 'second')
+        self.assertEqual(self.run_rename(SID[:8], 'x', open_ids=[SID], force=True), 0)
+        self.assertEqual(cs.session_name(self.path), 'x')
+
+    def test_unknown_session_changes_nothing(self):
+        self.assertEqual(self.run_rename('ffffffff', 'x'), 1)
+        self.assertEqual(cs.session_name(self.path), 'second')

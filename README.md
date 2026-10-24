@@ -107,6 +107,19 @@ It searches the directory, branch, opening prompt, last prompt and the whole
 thread of every conversation — open or not. `--go` brings the top match's window
 to the front if it's running, and reopens it if it isn't.
 
+## Names
+
+A conversation named with `/rename` (or `claude --name`) shows under that name in
+`list`, `find` and `page`, and `find` searches it first. To name one that isn't
+open:
+
+```bash
+claude-sessions rename 3f2a9c14 gateway rate limiting
+```
+
+It writes the same records `/rename` does. An open conversation is refused,
+since its window holds the name in memory; type `/rename` there instead.
+
 ## Remembering what you closed
 
 A window you closed on purpose should be remembered, not reopened:
